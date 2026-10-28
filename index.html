@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Frontera de Ceuta · Colas</title>
+<!--
+CONFIGURACIÓN (Supabase, gratis): rellena SUPABASE_URL y SUPABASE_KEY (clave "anon public") más abajo.
+SQL para ejecutar una vez en Supabase > SQL Editor:
+
+create table reports(id bigint generated always as identity primary key,
+ pt text check (pt in ('entrada','salida')), md text check (md in ('coche','pie')),
+ espera int check (espera between 0 and 600), src text check (char_length(src)<=20),
+ note text check (char_length(note)<=300), t timestamptz default now());
+alter table reports enable row level security;
+create policy "leer" on reports for select using (true);
+create policy "publicar" on reports for insert with check (true);
+-->
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--tx:#14181f;--mu:#5b6575;--bd:#dde1e8;--ac:#1f5fd6;--ok:#1a8f4c;--wa:#c98400;--bad:#d03232;color-scheme:light dark}
+@media (prefers-color-scheme:dark){:root{--bg:#0f1218;--card:#181d26;--tx:#eef1f6;--mu:#9aa5b8;--bd:#2a3140;--ac:#6ea0ff;--ok:#43c37b;--wa:#e8b23a;--bad:#ff6b6b}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--tx);font:16px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif}
+main{max-width:640px;margin:0 auto;padding:16px}h1{font-size:22px;margin:4px 0 2px}h2{font-size:16px;margin:22px 0 8px}
+.sub{color:var(--mu);font-size:14px;margin:0 0 14px}.grid,.row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:14px;padding:12px}
+.pt{font-size:13px;color:var(--mu)}.big{font-size:28px;font-weight:700;margin:2px 0}.meta{font-size:12px;color:var(--mu)}
+.dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px}
+label{display:block;font-size:13px;color:var(--mu);margin:10px 0 4px}
+select,input,textarea,button{font:inherit;width:100%;padding:10px;border-radius:10px;border:1px solid var(--bd);background:var(--card);color:var(--tx)}
+button{background:var(--ac);color:#fff;border:0;font-weight:600;margin-top:12px}button:disabled{opacity:.5}
+.rep{padding:10px 0;border-bottom:1px solid var(--bd)}.rep:last-child{border:0}
+.tag{display:inline-block;font-size:11px;padding:1px 8px;border-radius:99px;border:1px solid var(--bd);color:var(--mu);margin:0 4px 2px 0}
+.warn{font-size:12px;color:var(--mu);margin-top:18px}
+</style>
+</head>
+<body>
+<main>
+<h1>🚗 Frontera de Ceuta</h1>
+<p class="sub">Entrada a Ceuta por la frontera marroquí y salida de Ceuta por la frontera del Tarajal: colas en coche y a pie, según los avisos de las últimas 3 h.</p>
+<div class="grid" id="status"></div>
+<h2>Añadir aviso</h2>
+<div class="card">
+<div class="row">
+<div><label for="pt">Sentido</label><select id="pt"><option value="entrada">Entrada a Ceuta (frontera marroquí)</option><option value="salida">Salida de Ceuta (frontera del Tarajal)</option></select></div>
+<div><label for="md">Modo</label><select id="md"><option value="coche">Coche</option><option value="pie">A pie</option></select></div>
+</div>
+<div class="row">
+<div><label for="min">Espera (minutos)</label><input id="min" type="number" min="0" max="600" inputmode="numeric" placeholder="45"></div>
+<div><label for="src">Fuente</label><select id="src"><option>Medio</option><option>Grupo</option><option>Noticia</option><option>Comentario</option><option>Yo mismo</option></select></div>
+</div>
+<label for="note">Nota o enlace (opcional)</label>
+<textarea id="note" rows="2" maxlength="300"></textarea>
+<button id="send">Publicar aviso</button>
+<div class="meta" id="msg"></div>
+</div>
+<h2>Últimos avisos</h2>
+<div class="card" id="list"><span class="meta">Cargando…</span></div>
+<p class="warn">Los avisos los aportan los usuarios; no son datos oficiales y pueden contener errores.</p>
+</main>
+<script>
+const SUPABASE_URL="https://ycgtaurddedllzgynruv.supabase.co",SUPABASE_KEY="sb_publishable_onGd4xN8MSSjWVkbgsirdg_dZvy-Ctl";
+const $=id=>document.getElementById(id),H=3*3600e3;
+const SENT={entrada:"Entrada a Ceuta (frontera marroquí)",salida:"Salida de Ceuta (frontera del Tarajal)"};
+const hd={apikey:SUPABASE_KEY,"Content-Type":"application/json"};
+let reports=[];
+function ago(t){const m=Math.round((Date.now()-t)/60000);return m<1?"ahora":m<60?"hace "+m+" min":"hace "+Math.round(m/60)+" h"}
+function med(a){a=a.slice().sort((x,y)=>x-y);const n=a.length;return n%2?a[(n-1)/2]:Math.round((a[n/2-1]+a[n/2])/2)}
+function render(){
+ const now=Date.now(),st=$("status");st.textContent="";
+ for(const p of ["entrada","salida"])for(const m of ["coche","pie"]){
+  const r=reports.filter(x=>x.pt===p&&x.md===m&&now-x.t<H);
+  const v=r.length?med(r.map(x=>x.espera)):null;
+  const col=v===null?"var(--bd)":v<30?"var(--ok)":v<90?"var(--wa)":"var(--bad)";
+  const c=document.createElement("div");c.className="card";
+  c.innerHTML='<div class="pt"><span class="dot" style="background:'+col+'"></span><span></span></div><div class="big"></div><div class="meta"></div>';
+  c.querySelector(".pt span:last-child").textContent=SENT[p]+" · "+(m==="coche"?"coche":"a pie");
+  c.querySelector(".big").textContent=v===null?"Sin datos":v+" min";
+  c.querySelector(".meta").textContent=r.length?r.length+" aviso"+(r.length>1?"s":"")+" · último "+ago(Math.max(...r.map(x=>x.t))):"Nadie ha avisado aún";
+  st.append(c);
+ }
+ const l=$("list");l.textContent="";
+ const rs=reports.slice().sort((a,b)=>b.t-a.t).slice(0,20);
+ if(!rs.length){l.innerHTML='<span class="meta">Todavía no hay avisos.</span>';return}
+ for(const x of rs){
+  const d=document.createElement("div");d.className="rep";
+  const tg=document.createElement("div");
+  for(const s of [SENT[x.pt],x.md==="coche"?"Coche":"A pie",x.src]){if(!s)continue;const e=document.createElement("span");e.className="tag";e.textContent=s;tg.append(e)}
+  const b=document.createElement("div");b.textContent=x.espera+" min"+(x.note?" — "+x.note:"");
+  const m=document.createElement("div");m.className="meta";m.textContent=ago(x.t);
+  d.append(tg,b,m);l.append(d);
+ }
+}
+async function load(){
+ try{
+  const since=new Date(Date.now()-6*3600e3).toISOString();
+  const r=await fetch(SUPABASE_URL+"/rest/v1/reports?select=pt,md,espera,src,note,t&t=gte."+encodeURIComponent(since)+"&order=t.desc&limit=200",{headers:hd});
+  if(!r.ok)throw 0;
+  reports=(await r.json()).map(x=>({...x,t:new Date(x.t).getTime()}));
+  render();
+ }catch(e){$("list").textContent="No se pudieron cargar los avisos.";}
+}
+$("send").onclick=async()=>{
+ const espera=parseInt($("min").value,10);
+ if(isNaN(espera)||espera<0||espera>600){$("msg").textContent="Indica los minutos de espera (0–600).";return}
+ const last=+localStorage.getItem("last")||0;
+ if(Date.now()-last<60000){$("msg").textContent="Espera un minuto antes de enviar otro aviso.";return}
+ $("send").disabled=true;
+ try{
+  const r=await fetch(SUPABASE_URL+"/rest/v1/reports",{method:"POST",headers:{...hd,Prefer:"return=minimal"},body:JSON.stringify({pt:$("pt").value,md:$("md").value,espera,src:$("src").value,note:$("note").value.trim().slice(0,300)})});
+  if(!r.ok)throw 0;
+  try{localStorage.setItem("last",Date.now())}catch(e){}
+  $("note").value="";$("min").value="";$("msg").textContent="Aviso publicado.";load();
+ }catch(e){$("msg").textContent="No se pudo publicar. Inténtalo de nuevo.";}
+ $("send").disabled=false;
+};
+render();load();setInterval(load,60000);
+</script>
+</body>
+</html>
